@@ -1,12 +1,24 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
-const config     = JSON.parse(fs.readFileSync(path.join(__dirname, 'wallet-config.json'), 'utf8'));
-const botConfig  = JSON.parse(fs.readFileSync(path.join(__dirname, 'bot-config.json'),    'utf8'));
+// Fungsi pembantu untuk membaca JSON dengan aman agar tidak langsung crash jika format salah
+function loadJsonConfig(fileName) {
+  try {
+    const filePath = path.join(__dirname, fileName);
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    console.error(`[ERROR] Gagal membaca atau parse file ${fileName}:`, error.message);
+    process.exit(1);
+  }
+}
 
-// Prioritas diganti ke STR/AGI/VIT untuk bertarung
-const ENABLE_SKILL  = (botConfig.autoSkill && botConfig.autoSkill.aktif || 'Y').toUpperCase() === 'Y';
+const config    = loadJsonConfig('wallet-config.json');
+const botConfig = loadJsonConfig('bot-config.json');
+
+// Prioritas stat untuk bertarung
+const ENABLE_SKILL   = (botConfig.autoSkill && botConfig.autoSkill.aktif || 'Y').toUpperCase() === 'Y';
 const SKILL_PRIORITY = (botConfig.autoSkill && botConfig.autoSkill.prioritas) || ['str', 'agi', 'vit'];
 
 const TILE_TO_WORLD = 64;
@@ -24,7 +36,7 @@ class GameBot {
 
     this.inventory = { wood: 0 };
     this.xp        = { level: 1, free: 0, speedMult: 1 };
-    this.world     = { mobs: [] }; // Diubah untuk menampung data Monster
+    this.world     = { mobs: [] }; // Menampung data Monster
 
     this.currentTargetMobId = null; 
     this.isMoving           = false;
@@ -46,13 +58,23 @@ class GameBot {
 
   connect() {
     return new Promise((resolve, reject) => {
+      const options = {};
+      
+      // Menggunakan proxy jika dikonfigurasi di wallet-config.json
+      if (config.proxy) {
+        console.log(`[BOT] Menggunakan Proxy: ${config.proxy}`);
+        options.agent = new HttpsProxyAgent(config.proxy);
+      }
+
       console.log(`[BOT] Menghubungkan ke ${config.gameServer.url}`);
-      this.ws = new WebSocket(config.gameServer.url);
+      this.ws = new WebSocket(config.gameServer.url, options);
 
       this.ws.on('open', () => {
         console.log('[BOT] Terhubung ke Islands server!');
         this.isConnected = true;
         this.sendHello();
+        
+        if (this._pingTimer) clearInterval(this._pingTimer);
         this._pingTimer = setInterval(() => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.ping();
         }, 15000);
@@ -65,7 +87,10 @@ class GameBot {
       this.ws.on('close', () => {
         this.isConnected = false;
         this.stopIntervals();
-        if (this._running) setTimeout(() => this.connect(), 3000);
+        if (this._running) {
+          console.log('[BOT] Koneksi terputus. Mencoba menghubungkan kembali dalam 3 detik...');
+          setTimeout(() => this.connect().catch(() => {}), 3000);
+        }
       });
     });
   }
@@ -73,6 +98,7 @@ class GameBot {
   stopIntervals() {
     if (this.stateInterval) clearInterval(this.stateInterval);
     if (this.attackInterval) clearInterval(this.attackInterval);
+    if (this._pingTimer) clearInterval(this._pingTimer);
   }
 
   send(msg) {
@@ -99,8 +125,8 @@ class GameBot {
       facing: this.player.facing,
       boat:   this.player.boat,
       bd:     this.player.bd,
-      vcx:    this.player.x, 
-      vcy:    this.player.y,
+      vcx:    this.player.vcx, // Ter-sinkronisasi dari moveToward
+      vcy:    this.player.vcy, // Ter-sinkronisasi dari moveToward
       vr:     this.player.vr
     });
   }
@@ -134,7 +160,6 @@ class GameBot {
         this.startIntervals();
         break;
       case 'inv':
-        // Menyimpan status inventori umum
         if (msg.wood !== undefined) this.inventory.wood = msg.wood;
         break;
       case 'xp':
@@ -144,19 +169,14 @@ class GameBot {
         if (msg.free > 0) this.checkAndAllocateSkills();
         break;
       case 'loot':
-        // Menghitung jika mendapatkan item drop dari monster
         console.log(`[BOT] ⚔️ Loot terjatuh: ${msg.item} x${msg.qty}`);
         break;
       case 'world':
-        // Ambil data mobs/monsters dari server update
         if (msg.mobs) {
           this.world.mobs = msg.mobs;
-        } else if (msg.players) {
-          // Jika game ini menyatukan entitas monster di array lain, sesuaikan di sini
         }
         break;
       case 'death':
-        // Jika monster mati atau player mati
         if (msg.id === this.currentTargetMobId) {
           this.sessionKills++;
           console.log(`[BOT] 💀 Target Mati! Total Kill Sesi Ini: ${this.sessionKills}`);
@@ -168,65 +188,68 @@ class GameBot {
   }
 
   startIntervals() {
-    this.stateInterval  = setInterval(() => this.sendState(), 40);
-    this.attackInterval = setInterval(() => this.processRadarCombat(), 60);
+    // Memberikan sedikit variasi jeda acak (jitter) agar antar akun tidak berbenturan paket di ms yang sama
+    const jitter = Math.floor(Math.random() * 15);
+    this.stateInterval  = setInterval(() => this.sendState(), 45 + jitter);
+    this.attackInterval = setInterval(() => this.processRadarCombat(), 65 + jitter);
   }
 
-  // ─── ENGINE HALUAN BARU: COMBAT RADAR & MONSTER HUNTING ───────────────────
+  // ─── ENGINE COMBAT RADAR & MONSTER HUNTING ───────────────────
   processRadarCombat() {
     if (!this.isConnected || !this.isAuthenticated) return;
 
-    // Filter monster yang masih hidup (hp > 0)
     const availableMobs = (this.world.mobs || []).filter(m => m.hp === undefined || m.hp > 0);
 
     if (availableMobs.length > 0) {
       let targetMob = null;
 
-      const parseMobWorld = (m) => {
-        // Konversi koordinat tile ke world seandainya server mengirim format mentah
+      const mappedMobs = availableMobs.map(m => {
         const wx = m.x !== undefined ? (m.x > 1000 ? m.x : m.x * TILE_TO_WORLD) : (m.wx || 0);
         const wy = m.y !== undefined ? (m.y > 1000 ? m.y : m.y * TILE_TO_WORLD) : (m.wy || 0);
         return { id: m.id, type: m.type || 'Monster', wx, wy, hp: m.hp };
-      };
+      });
 
-      // Kunci target lama jika masih ada dan hidup
       if (this.currentTargetMobId) {
-        const mappedMobs = availableMobs.map(m => parseMobWorld(m));
-        targetMob = mappedMobs.find(m => m.id === this.currentTargetMobId && (m.hp === undefined || m.hp > 0));
+        targetMob = mappedMobs.find(m => m.id === this.currentTargetMobId);
       }
 
-      // Cari target baru terdekat jika belum punya target
+      // Pencarian monster terdekat yang dioptimasi tanpa beban reduce berlebih
       if (!targetMob) {
-        const mobsWorld = availableMobs.map(m => parseMobWorld(m));
-        const nearest = mobsWorld.reduce((best, m) =>
-          this.distanceTo(m.wx, m.wy) < this.distanceTo(best.wx, best.wy) ? m : best
-        , mobsWorld[0]);
-
-        this.currentTargetMobId = nearest.id;
-        targetMob = nearest;
-        console.log(`[BOT] ⚔️ LOCK TARGET -> [${targetMob.type}] Jarak: ${this.distanceTo(targetMob.wx, targetMob.wy).toFixed(0)} unit. INSTANT DASH COMBO!`);
-      }
-
-      const dist = this.distanceTo(targetMob.wx, targetMob.wy);
-
-      // Jarak serang monster (range default sekitar 50 unit)
-      if (dist > 48) {
-        // Teleport/Akselerasi super cepat mendekati monster
-        let hyperStep = 90;
-        if (dist > 400) {
-          hyperStep = 550;
-        } else if (dist > 150) {
-          hyperStep = 300;
+        let minDistance = Infinity;
+        for (const m of mappedMobs) {
+          const d = this.distanceTo(m.wx, m.wy);
+          if (d < minDistance) {
+            minDistance = d;
+            targetMob = m;
+          }
         }
 
-        const finalStep = Math.min(dist, hyperStep * this.xp.speedMult);
-        this.moveToward(targetMob.wx, targetMob.wy, finalStep);
-      } else {
-        this.isMoving = false;
-        // BURST COMBAT: Spam 3x serangan instan per tick untuk menguras darah monster dengan cepat!
-        this.sendAttack();
-        this.sendAttack();
-        this.sendAttack();
+        if (targetMob) {
+          this.currentTargetMobId = targetMob.id;
+          console.log(`[BOT] ⚔️ LOCK TARGET -> [${targetMob.type}] Jarak: ${minDistance.toFixed(0)} unit. INSTANT DASH COMBO!`);
+        }
+      }
+
+      if (targetMob) {
+        const dist = this.distanceTo(targetMob.wx, targetMob.wy);
+
+        if (dist > 48) {
+          let hyperStep = 90;
+          if (dist > 400) {
+            hyperStep = 550;
+          } else if (dist > 150) {
+            hyperStep = 300;
+          }
+
+          const finalStep = Math.min(dist, hyperStep * this.xp.speedMult);
+          this.moveToward(targetMob.wx, targetMob.wy, finalStep);
+        } else {
+          this.isMoving = false;
+          // BURST COMBAT: Spam 3x serangan instan per tick
+          this.sendAttack();
+          this.sendAttack();
+          this.sendAttack();
+        }
       }
     } else {
       this.currentTargetMobId = null;
@@ -240,8 +263,13 @@ class GameBot {
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 1) return;
 
-    this.player.x      = Math.round(this.player.x + (dx / dist) * step);
-    this.player.y      = Math.round(this.player.y + (dy / dist) * step);
+    const nextX = Math.round(this.player.x + (dx / dist) * step);
+    const nextY = Math.round(this.player.y + (dy / dist) * step);
+
+    this.player.x      = nextX;
+    this.player.y      = nextY;
+    this.player.vcx    = nextX; // vcx sinkron dengan posisi real x
+    this.player.vcy    = nextY; // vcy sinkron dengan posisi real y
     this.player.facing = dx > 0 ? 1 : -1;
     this.player.bd     = dx > 0 ? 'right' : 'left';
     this.isMoving      = true;
@@ -277,6 +305,9 @@ module.exports = GameBot;
 
 if (require.main === module) {
   const bot = new GameBot();
-  process.on('SIGINT', () => { process.exit(0); });
+  process.on('SIGINT', () => { 
+    bot.stopIntervals();
+    process.exit(0); 
+  });
   bot.connect().then(() => bot.startAutoPlay()).catch(() => process.exit(1));
 }
