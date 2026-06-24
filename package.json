@@ -1,0 +1,35 @@
+{
+  "name": "islands-game-bot",
+  "version": "1.0.0",
+  "description": "Automated game bot for Islands.games - Auto-play tree cutting, gold mining, and battles",
+  "main": "bot-launcher.js",
+  "scripts": {
+    "start": "node bot-launcher.js",
+    "play:30": "node bot-launcher.js 30",
+    "play:60": "node bot-launcher.js 60",
+    "play:120": "node bot-launcher.js 120",
+    "play:custom": "node bot-launcher.js",
+    "test": "node verify-bot.js"
+  },
+  "keywords": [
+    "game",
+    "bot",
+    "automation",
+    "islands",
+    "websocket"
+  ],
+  "author": "Game Bot Developer",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.95.3",
+    "bip39": "^3.1.0",
+    "bs58": "^6.0.0",
+    "ed25519-hd-key": "^2.0.0",
+    "tweetnacl": "^1.0.3",
+    "uuid": "^9.0.1",
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

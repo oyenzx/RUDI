@@ -1,0 +1,23 @@
+{
+  "modes": {
+    "tebangKayu":  "N",
+    "pertarungan": "Y",
+    "tambangEmas": "y"
+  },
+  "autoSkill": {
+    "aktif": "Y",
+    "prioritas": ["str", "Agility", "vit"],
+    "keterangan": {
+      "vit": "Vitality — menambah HP agar tidak mudah mati",
+      "str": "Strength — mempercepat panen dan bertarung",
+      "agi": "Agility — menambah kecepatan gerak"
+    },
+    "catatan": "Urutan prioritas: skill pertama di-upgrade dulu sampai tidak ada free point, lalu berikutnya. Ganti urutan sesuai kebutuhan."
+  },
+  "notes": {
+    "tebangKayu":  "Y = aktif tebang pohon HP 100%, N = skip",
+    "pertarungan": "Y = aktif serang mob HP 100%, N = skip",
+    "tambangEmas": "Y = aktif tambang emas HP 100%, N = skip",
+    "autoSkill":   "Y = otomatis upgrade skill saat ada free point, N = tidak"
+  }
+}

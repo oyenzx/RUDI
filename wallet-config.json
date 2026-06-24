@@ -1,0 +1,14 @@
+{
+  "player": {
+    "name": "SHIBA",
+    "color": "Red",
+    "t": "hello"
+  },
+  "auth": {
+    "walletAddress": "4Z3JjzkMwJaVYxrtyrVL32Ef3efYENT8bMFwBNxHGqo1",
+    "sessionToken": "aaaaaaaaaaaaaaaa"
+  },
+  "gameServer": {
+    "url": "wss://game-production-87db.up.railway.app/"
+  }
+}
