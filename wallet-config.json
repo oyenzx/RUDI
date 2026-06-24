@@ -1,14 +1,14 @@
 {
-  "player": {
-    "name": "SHIBA",
-    "color": "Red",
-    "t": "hello"
-  },
-  "auth": {
-    "walletAddress": "4Z3JjzkMwJaVYxrtyrVL32Ef3efYENT8bMFwBNxHGqo1",
-    "sessionToken": "aaaaaaaaaaaaaaaa"
-  },
   "gameServer": {
     "url": "wss://game-production-87db.up.railway.app/"
-  }
+  },
+  "auth": {
+    "walletAddress": "FD3vhTN51kGveNKi4BXpRFYYpPQcktdZvc7sUqTCfiNd",
+    "sessionToken": "PASTIKAN_SALIN_SEMUA_TOKEN_YANG_UTUH_DI_SINI"
+  },
+  "player": {
+    "name": "PEPE",
+    "color": "Red"
+  },
+  "proxy": "http://mhjznqiu:jxpzqmopkr8i@191.96.254.138:6185"
 }
